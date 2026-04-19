@@ -1,41 +1,22 @@
-# Prerequisites
-*.d
+# Build output
+build/
+out/
 
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
+# SPIR-V compiled shaders
+*.spv
 
-# Precompiled Headers
-*.gch
-*.pch
+# Visual Studio CMake
+.vs/
+CMakeSettings.json
+CMakeCache.txt
+cmake_install.cmake
+CMakeFiles/
 
-# Linker files
-*.ilk
+# Visual Studio
+*.user
+*.suo
+*.VC.db
+*.VC.opendb
 
-# Debugger Files
-*.pdb
-
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
-*.exe
-*.out
-*.app
-
-# debug information files
-*.dwo
+# ImGui layout save
+imgui.ini
