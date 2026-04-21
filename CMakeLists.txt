@@ -3,6 +3,7 @@ project(Renderer LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
@@ -64,6 +65,7 @@ target_include_directories(Renderer PRIVATE
     Source
     ThirdParty/stb
     ThirdParty/vma/include
+    ${Vulkan_INCLUDE_DIRS}
 )
 
 target_compile_definitions(Renderer PRIVATE
