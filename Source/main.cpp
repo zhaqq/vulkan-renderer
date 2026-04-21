@@ -332,6 +332,40 @@ static VkSwapchainKHR createSwapchain(VkPhysicalDevice physicalDevice, VkDevice 
     return swapchain;
 }
 
+// Creates one VkImageView per swapchain image. Views describe how to interpret the raw image memory.
+static std::vector<VkImageView> createImageViews(VkDevice device,
+    const std::vector<VkImage>& images, VkFormat format)
+{
+    std::vector<VkImageView> imageViews(images.size());
+
+    for (size_t i = 0; i < images.size(); i++)
+    {
+        VkImageViewCreateInfo viewInfo{};
+        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        viewInfo.image = images[i];
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format = format;
+        viewInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+        viewInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+        viewInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+        viewInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+        // subresourceRange defines which part of the image this view covers.
+        // For swapchain images that is always the full color image, one mip, one layer.
+        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        viewInfo.subresourceRange.baseMipLevel = 0;
+        viewInfo.subresourceRange.levelCount = 1;
+        viewInfo.subresourceRange.baseArrayLayer = 0;
+        viewInfo.subresourceRange.layerCount = 1;
+
+        if (vkCreateImageView(device, &viewInfo, nullptr, &imageViews[i]) != VK_SUCCESS)
+        {
+            std::cerr << "Failed to create image view " << i << "\n";
+        }
+    }
+
+    return imageViews;
+}
+
 int main()
 {
     if (!glfwInit())
@@ -439,6 +473,8 @@ int main()
     std::cout << "Swapchain created: " << swapchainExtent.width << "x"
         << swapchainExtent.height << ", " << imageCount << " images\n";
 
+    std::vector<VkImageView> swapchainImageViews = createImageViews(device, swapchainImages, swapchainFormat);
+
     while (!glfwWindowShouldClose(window))
     {
         glfwPollEvents();
@@ -446,6 +482,11 @@ int main()
         {
             glfwSetWindowShouldClose(window, GLFW_TRUE);
         }
+    }
+
+    for (VkImageView view : swapchainImageViews)
+    {
+        vkDestroyImageView(device, view, nullptr);
     }
 
     // Destroy in reverse creation order. Vulkan does not clean up after you.
