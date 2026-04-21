@@ -366,6 +366,61 @@ static std::vector<VkImageView> createImageViews(VkDevice device,
     return imageViews;
 }
 
+// Creates a legacy render pass with a single color attachment.
+// Phase 2 replaces this entirely with vkCmdBeginRenderingKHR (dynamic rendering).
+// We build it here to understand what dynamic rendering eliminates.
+static VkRenderPass createRenderPass(VkDevice device, VkFormat swapchainFormat)
+{
+    // The attachment describes the swapchain image: clear on load, store on done,
+    // and transition from UNDEFINED to PRESENT_SRC_KHR.
+    VkAttachmentDescription colorAttachment{};
+    colorAttachment.format = swapchainFormat;
+    colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+    VkAttachmentReference colorRef{};
+    colorRef.attachment = 0;
+    colorRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments = &colorRef;
+
+    // The subpass dependency tells the driver to wait for the swapchain image
+    // to be available before writing color output. Without this the render pass
+    // could start before the image is ready to be written to.
+    VkSubpassDependency dependency{};
+    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependency.dstSubpass = 0;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.srcAccessMask = 0;
+    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+    VkRenderPassCreateInfo renderPassInfo{};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    renderPassInfo.attachmentCount = 1;
+    renderPassInfo.pAttachments = &colorAttachment;
+    renderPassInfo.subpassCount = 1;
+    renderPassInfo.pSubpasses = &subpass;
+    renderPassInfo.dependencyCount = 1;
+    renderPassInfo.pDependencies = &dependency;
+
+    VkRenderPass renderPass = VK_NULL_HANDLE;
+    if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS)
+    {
+        std::cerr << "Failed to create render pass\n";
+    }
+
+    return renderPass;
+}
+
 int main()
 {
     if (!glfwInit())
@@ -475,6 +530,12 @@ int main()
 
     std::vector<VkImageView> swapchainImageViews = createImageViews(device, swapchainImages, swapchainFormat);
 
+    VkRenderPass renderPass = createRenderPass(device, swapchainFormat);
+    if (renderPass == VK_NULL_HANDLE)
+    {
+        return 1;
+    }
+
     while (!glfwWindowShouldClose(window))
     {
         glfwPollEvents();
@@ -483,6 +544,8 @@ int main()
             glfwSetWindowShouldClose(window, GLFW_TRUE);
         }
     }
+
+    vkDestroyRenderPass(device, renderPass, nullptr);
 
     for (VkImageView view : swapchainImageViews)
     {
