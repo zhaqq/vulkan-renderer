@@ -48,13 +48,17 @@ find_program(DXC_EXECUTABLE dxc
 )
 
 add_custom_command(
-    OUTPUT ${CMAKE_BINARY_DIR}/test_vs.spv
-    COMMAND ${DXC_EXECUTABLE} -T vs_6_0 -E VSMain -spirv -Fo ${CMAKE_BINARY_DIR}/test_vs.spv ${CMAKE_SOURCE_DIR}/Shaders/HLSL/test.hlsl
-    DEPENDS ${CMAKE_SOURCE_DIR}/Shaders/HLSL/test.hlsl
-    COMMENT "Compiling test.hlsl to SPIR-V"
+    OUTPUT ${CMAKE_BINARY_DIR}/triangle_vs.spv ${CMAKE_BINARY_DIR}/triangle_ps.spv
+    COMMAND ${DXC_EXECUTABLE} -T vs_6_0 -E VSMain -spirv -Fo ${CMAKE_BINARY_DIR}/triangle_vs.spv ${CMAKE_SOURCE_DIR}/Shaders/HLSL/triangle.hlsl
+    COMMAND ${DXC_EXECUTABLE} -T ps_6_0 -E PSMain -spirv -Fo ${CMAKE_BINARY_DIR}/triangle_ps.spv ${CMAKE_SOURCE_DIR}/Shaders/HLSL/triangle.hlsl
+    DEPENDS ${CMAKE_SOURCE_DIR}/Shaders/HLSL/triangle.hlsl
+    COMMENT "Compiling triangle.hlsl to SPIR-V"
 )
 
-add_custom_target(Shaders ALL DEPENDS ${CMAKE_BINARY_DIR}/test_vs.spv)
+add_custom_target(Shaders ALL DEPENDS
+    ${CMAKE_BINARY_DIR}/triangle_vs.spv
+    ${CMAKE_BINARY_DIR}/triangle_ps.spv
+)
 
 # Main executable
 add_executable(Renderer

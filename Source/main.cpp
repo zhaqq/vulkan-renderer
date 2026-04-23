@@ -2,6 +2,7 @@
 #include <vector>
 #include <string>
 #include <algorithm>
+#include <fstream>
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
@@ -421,6 +422,37 @@ static VkRenderPass createRenderPass(VkDevice device, VkFormat swapchainFormat)
     return renderPass;
 }
 
+// Reads a SPIR-V binary from disk and wraps it in a VkShaderModule.
+// The module is just a thin container around the bytecode. The driver
+// compiles it to GPU machine code when the pipeline is created.
+static VkShaderModule loadShaderModule(VkDevice device, const std::string& path)
+{
+    std::ifstream file(path, std::ios::ate | std::ios::binary);
+    if (!file.is_open())
+    {
+        std::cerr << "Failed to open shader: " << path << "\n";
+        return VK_NULL_HANDLE;
+    }
+
+    size_t fileSize = static_cast<size_t>(file.tellg());
+    std::vector<char> buffer(fileSize);
+    file.seekg(0);
+    file.read(buffer.data(), fileSize);
+
+    VkShaderModuleCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    createInfo.codeSize = buffer.size();
+    createInfo.pCode = reinterpret_cast<const uint32_t*>(buffer.data());
+
+    VkShaderModule shaderModule = VK_NULL_HANDLE;
+    if (vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS)
+    {
+        std::cerr << "Failed to create shader module: " << path << "\n";
+    }
+
+    return shaderModule;
+}
+
 int main()
 {
     if (!glfwInit())
@@ -536,6 +568,14 @@ int main()
         return 1;
     }
 
+    VkShaderModule vertShader = loadShaderModule(device, "triangle_vs.spv");
+    VkShaderModule fragShader = loadShaderModule(device, "triangle_ps.spv");
+
+    if (vertShader == VK_NULL_HANDLE || fragShader == VK_NULL_HANDLE)
+    {
+        return 1;
+    }
+
     while (!glfwWindowShouldClose(window))
     {
         glfwPollEvents();
@@ -544,6 +584,9 @@ int main()
             glfwSetWindowShouldClose(window, GLFW_TRUE);
         }
     }
+
+    vkDestroyShaderModule(device, fragShader, nullptr);
+    vkDestroyShaderModule(device, vertShader, nullptr);
 
     vkDestroyRenderPass(device, renderPass, nullptr);
 
