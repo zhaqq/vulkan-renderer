@@ -75,6 +75,7 @@ target_include_directories(Renderer PRIVATE
 target_compile_definitions(Renderer PRIVATE
     GLM_FORCE_DEPTH_ZERO_TO_ONE
     GLM_FORCE_RADIANS
+    SHADER_DIR="${CMAKE_BINARY_DIR}/"
 )
 
 target_link_libraries(Renderer PRIVATE

@@ -3,8 +3,13 @@
 #include <string>
 #include <algorithm>
 #include <fstream>
+#include <imgui.h>
+#include <imgui_impl_glfw.h>
+#include <imgui_impl_vulkan.h>
+
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#include <imgui_impl_vulkan.cpp>
 
 #ifdef NDEBUG
 constexpr bool enableValidation = false;
@@ -449,6 +454,7 @@ static void recordCommandBuffer(VkCommandBuffer commandBuffer, VkRenderPass rend
     renderPassInfo.pClearValues = &clearColor;
 
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
     // Viewport and scissor are dynamic so we set them here at record time.
@@ -468,6 +474,8 @@ static void recordCommandBuffer(VkCommandBuffer commandBuffer, VkRenderPass rend
 
     // 3 vertices, 1 instance, no offsets. Positions come from the vertex shader.
     vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+
+    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
 
     vkCmdEndRenderPass(commandBuffer);
 
@@ -748,8 +756,8 @@ int main()
         return 1;
     }
 
-    VkShaderModule vertShader = loadShaderModule(device, "triangle_vs.spv");
-    VkShaderModule fragShader = loadShaderModule(device, "triangle_ps.spv");
+    VkShaderModule vertShader = loadShaderModule(device, SHADER_DIR "triangle_vs.spv");
+    VkShaderModule fragShader = loadShaderModule(device, SHADER_DIR "triangle_ps.spv");
 
     if (vertShader == VK_NULL_HANDLE || fragShader == VK_NULL_HANDLE)
     {
@@ -798,9 +806,51 @@ int main()
         return 1;
     }
 
+    // ImGui setup
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGui::StyleColorsDark();
+
+    ImGui_ImplGlfw_InitForVulkan(window, true);
+
+    // ImGui needs its own descriptor pool to allocate its font texture descriptor.
+    VkDescriptorPoolSize poolSize{};
+    poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSize.descriptorCount = 1;
+
+    VkDescriptorPoolCreateInfo poolCreateInfo{};
+    poolCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolCreateInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    poolCreateInfo.maxSets = 1;
+    poolCreateInfo.poolSizeCount = 1;
+    poolCreateInfo.pPoolSizes = &poolSize;
+
+    VkDescriptorPool imguiPool = VK_NULL_HANDLE;
+    if (vkCreateDescriptorPool(device, &poolCreateInfo, nullptr, &imguiPool) != VK_SUCCESS)
+    {
+        std::cerr << "Failed to create ImGui descriptor pool\n";
+        return 1;
+    }
+
+    ImGui_ImplVulkan_InitInfo initInfo{};
+    initInfo.Instance = instance;
+    initInfo.PhysicalDevice = physicalDevice;
+    initInfo.Device = device;
+    initInfo.QueueFamily = queueFamilyIndex;
+    initInfo.Queue = graphicsQueue;
+    initInfo.DescriptorPool = imguiPool;
+    initInfo.MinImageCount = 2;
+    initInfo.ImageCount = static_cast<uint32_t>(swapchainImages.size());
+
+    initInfo.PipelineInfoMain.RenderPass = renderPass;
+    initInfo.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+    initInfo.PipelineInfoMain.Subpass = 0;
+
+    ImGui_ImplVulkan_Init(&initInfo);
+
     // Per frame: one semaphore signals when the swapchain image is ready to render into,
-// one signals when rendering is done and the image can be presented,
-// one fence lets the CPU wait until the GPU has finished this frame slot.
+    // one signals when rendering is done and the image can be presented,
+    // one fence lets the CPU wait until the GPU has finished this frame slot.
     std::vector<VkSemaphore> imageAvailableSemaphores(swapchainImages.size());
     std::vector<VkSemaphore> renderFinishedSemaphores(MAX_FRAMES_IN_FLIGHT);
     std::vector<VkFence> inFlightFences(MAX_FRAMES_IN_FLIGHT);
@@ -855,6 +905,19 @@ int main()
         vkResetFences(device, 1, &inFlightFences[currentFrame]);
 
         vkResetCommandBuffer(commandBuffers[currentFrame], 0);
+
+        ImGui_ImplVulkan_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+
+        ImGui::Begin("Debug");
+        ImGui::Text("GPU: Intel(R) Iris(R) Xe Graphics");
+        ImGui::Text("Frame time: %.3f ms", 1000.0f / ImGui::GetIO().Framerate);
+        ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
+        ImGui::End();
+
+        ImGui::Render();
+
         recordCommandBuffer(commandBuffers[currentFrame], renderPass,
             framebuffers[imageIndex], pipeline, swapchainExtent);
 
@@ -904,6 +967,10 @@ int main()
         vkDestroyFence(device, inFlightFences[i], nullptr);
     }
 
+    ImGui_ImplVulkan_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+    vkDestroyDescriptorPool(device, imguiPool, nullptr);
     vkDestroyCommandPool(device, commandPool, nullptr);
 
     for (VkFramebuffer fb : framebuffers)
