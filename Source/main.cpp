@@ -422,6 +422,33 @@ static VkRenderPass createRenderPass(VkDevice device, VkFormat swapchainFormat)
     return renderPass;
 }
 
+// Creates one framebuffer per swapchain image view, bound to the render pass.
+// A framebuffer connects a render pass to specific image views to render into.
+static std::vector<VkFramebuffer> createFramebuffers(VkDevice device,
+    VkRenderPass renderPass, const std::vector<VkImageView>& imageViews, VkExtent2D extent)
+{
+    std::vector<VkFramebuffer> framebuffers(imageViews.size());
+
+    for (size_t i = 0; i < imageViews.size(); i++)
+    {
+        VkFramebufferCreateInfo framebufferInfo{};
+        framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        framebufferInfo.renderPass = renderPass;
+        framebufferInfo.attachmentCount = 1;
+        framebufferInfo.pAttachments = &imageViews[i];
+        framebufferInfo.width = extent.width;
+        framebufferInfo.height = extent.height;
+        framebufferInfo.layers = 1;
+
+        if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &framebuffers[i]) != VK_SUCCESS)
+        {
+            std::cerr << "Failed to create framebuffer " << i << "\n";
+        }
+    }
+
+    return framebuffers;
+}
+
 // Creates the full graphics pipeline by explicitly filling every sub-struct.
 // Vulkan requires all state to be declared upfront unlike OpenGL's implicit state machine.
 static VkPipeline createGraphicsPipeline(VkDevice device, VkRenderPass renderPass,
@@ -682,6 +709,40 @@ int main()
         return 1;
     }
 
+    std::vector<VkFramebuffer> framebuffers = createFramebuffers(device, renderPass,
+        swapchainImageViews, swapchainExtent);
+
+    // The command pool owns the memory for command buffers.
+    // RESET_COMMAND_BUFFER_BIT lets us re-record a buffer without resetting the whole pool.
+    VkCommandPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    poolInfo.queueFamilyIndex = queueFamilyIndex;
+
+    VkCommandPool commandPool = VK_NULL_HANDLE;
+    if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS)
+    {
+        std::cerr << "Failed to create command pool\n";
+        return 1;
+    }
+
+    // One command buffer per frame in flight. 2 lets the CPU record frame N+1
+    // while the GPU is still executing frame N.
+    constexpr int MAX_FRAMES_IN_FLIGHT = 2;
+    std::vector<VkCommandBuffer> commandBuffers(MAX_FRAMES_IN_FLIGHT);
+
+    VkCommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.commandPool = commandPool;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandBufferCount = MAX_FRAMES_IN_FLIGHT;
+
+    if (vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data()) != VK_SUCCESS)
+    {
+        std::cerr << "Failed to allocate command buffers\n";
+        return 1;
+    }
+
     while (!glfwWindowShouldClose(window))
     {
         glfwPollEvents();
@@ -689,6 +750,13 @@ int main()
         {
             glfwSetWindowShouldClose(window, GLFW_TRUE);
         }
+    }
+
+    vkDestroyCommandPool(device, commandPool, nullptr);
+
+    for (VkFramebuffer fb : framebuffers)
+    {
+        vkDestroyFramebuffer(device, fb, nullptr);
     }
 
     vkDestroyPipeline(device, pipeline, nullptr);
