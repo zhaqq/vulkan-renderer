@@ -63,6 +63,7 @@ add_custom_target(Shaders ALL DEPENDS
 # Main executable
 add_executable(Renderer
     Source/main.cpp
+    Source/Core/VulkanContext.cpp
 )   
 
 target_include_directories(Renderer PRIVATE
