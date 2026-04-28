@@ -10,131 +10,7 @@
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
-
-// Queries surface capabilities and selects optimal swapchain settings.
-static VkSwapchainKHR createSwapchain(VkPhysicalDevice physicalDevice, VkDevice device,
-    VkSurfaceKHR surface, uint32_t queueFamilyIndex, GLFWwindow* window,
-    VkFormat& outFormat, VkExtent2D& outExtent)
-{
-    VkSurfaceCapabilitiesKHR caps{};
-    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &caps);
-
-    // Choose surface format. SRGB is preferred for correct gamma handling.
-    uint32_t formatCount = 0;
-    vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, nullptr);
-    std::vector<VkSurfaceFormatKHR> formats(formatCount);
-    vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, formats.data());
-
-    VkSurfaceFormatKHR chosenFormat = formats[0];
-    for (const auto& f : formats)
-    {
-        if (f.format == VK_FORMAT_B8G8R8A8_SRGB &&
-            f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
-        {
-            chosenFormat = f;
-            break;
-        }
-    }
-
-    // Choose present mode. Mailbox gives triple buffering without tearing.
-    // FIFO is the only guaranteed mode so it is the fallback.
-    uint32_t presentModeCount = 0;
-    vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &presentModeCount, nullptr);
-    std::vector<VkPresentModeKHR> presentModes(presentModeCount);
-    vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &presentModeCount, presentModes.data());
-
-    VkPresentModeKHR chosenPresentMode = VK_PRESENT_MODE_FIFO_KHR;
-    for (const auto& pm : presentModes)
-    {
-        if (pm == VK_PRESENT_MODE_MAILBOX_KHR)
-        {
-            chosenPresentMode = pm;
-            break;
-        }
-    }
-
-    // On HiDPI displays the framebuffer size in pixels differs from the window
-    // size in screen coordinates, so we always query the framebuffer size.
-    VkExtent2D extent{};
-    if (caps.currentExtent.width != UINT32_MAX)
-    {
-        extent = caps.currentExtent;
-    }
-    else
-    {
-        int w, h;
-        glfwGetFramebufferSize(window, &w, &h);
-        extent.width = std::clamp(static_cast<uint32_t>(w), caps.minImageExtent.width, caps.maxImageExtent.width);
-        extent.height = std::clamp(static_cast<uint32_t>(h), caps.minImageExtent.height, caps.maxImageExtent.height);
-    }
-
-    // Request one more image than the minimum so the CPU is never blocked
-    // waiting for the driver to release an image.
-    uint32_t imageCount = caps.minImageCount + 1;
-    if (caps.maxImageCount > 0 && imageCount > caps.maxImageCount)
-    {
-        imageCount = caps.maxImageCount;
-    }
-
-    VkSwapchainCreateInfoKHR swapchainInfo{};
-    swapchainInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
-    swapchainInfo.surface = surface;
-    swapchainInfo.minImageCount = imageCount;
-    swapchainInfo.imageFormat = chosenFormat.format;
-    swapchainInfo.imageColorSpace = chosenFormat.colorSpace;
-    swapchainInfo.imageExtent = extent;
-    swapchainInfo.imageArrayLayers = 1;
-    swapchainInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-    swapchainInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    swapchainInfo.preTransform = caps.currentTransform;
-    swapchainInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    swapchainInfo.presentMode = chosenPresentMode;
-    swapchainInfo.clipped = VK_TRUE;
-
-    VkSwapchainKHR swapchain = VK_NULL_HANDLE;
-    if (vkCreateSwapchainKHR(device, &swapchainInfo, nullptr, &swapchain) != VK_SUCCESS)
-    {
-        std::cerr << "Failed to create swapchain\n";
-    }
-
-    outFormat = chosenFormat.format;
-    outExtent = extent;
-    return swapchain;
-}
-
-// Creates one VkImageView per swapchain image. Views describe how to interpret the raw image memory.
-static std::vector<VkImageView> createImageViews(VkDevice device,
-    const std::vector<VkImage>& images, VkFormat format)
-{
-    std::vector<VkImageView> imageViews(images.size());
-
-    for (size_t i = 0; i < images.size(); i++)
-    {
-        VkImageViewCreateInfo viewInfo{};
-        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        viewInfo.image = images[i];
-        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        viewInfo.format = format;
-        viewInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-        viewInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-        viewInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-        viewInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-        // subresourceRange defines which part of the image this view covers.
-        // For swapchain images that is always the full color image, one mip, one layer.
-        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        viewInfo.subresourceRange.baseMipLevel = 0;
-        viewInfo.subresourceRange.levelCount = 1;
-        viewInfo.subresourceRange.baseArrayLayer = 0;
-        viewInfo.subresourceRange.layerCount = 1;
-
-        if (vkCreateImageView(device, &viewInfo, nullptr, &imageViews[i]) != VK_SUCCESS)
-        {
-            std::cerr << "Failed to create image view " << i << "\n";
-        }
-    }
-
-    return imageViews;
-}
+#include <Renderer/Swapchain.hpp>
 
 // Creates a legacy render pass with a single color attachment.
 // Phase 2 replaces this entirely with vkCmdBeginRenderingKHR (dynamic rendering).
@@ -429,25 +305,11 @@ int main()
     VkPhysicalDeviceProperties gpuProperties{};
     vkGetPhysicalDeviceProperties(physicalDevice, &gpuProperties);
 
-    VkFormat swapchainFormat{};
-    VkExtent2D swapchainExtent{};
-    VkSwapchainKHR swapchain = createSwapchain(physicalDevice, device, surface,
-        queueFamilyIndex, window, swapchainFormat, swapchainExtent);
-    if (swapchain == VK_NULL_HANDLE)
-    {
-        return 1;
-    }
+    Swapchain swapchain(physicalDevice, device, surface, window);
 
-    // Retrieve swapchain image handles. Vulkan may allocate more than we requested.
-    uint32_t imageCount = 0;
-    vkGetSwapchainImagesKHR(device, swapchain, &imageCount, nullptr);
-    std::vector<VkImage> swapchainImages(imageCount);
-    vkGetSwapchainImagesKHR(device, swapchain, &imageCount, swapchainImages.data());
-
-    std::cout << "Swapchain created: " << swapchainExtent.width << "x"
-        << swapchainExtent.height << ", " << imageCount << " images\n";
-
-    std::vector<VkImageView> swapchainImageViews = createImageViews(device, swapchainImages, swapchainFormat);
+    VkFormat             swapchainFormat = swapchain.Format();
+    VkExtent2D           swapchainExtent = swapchain.Extent();
+    const std::vector<VkImage>& swapchainImages = swapchain.Images();
 
     VkRenderPass renderPass = createRenderPass(device, swapchainFormat);
     if (renderPass == VK_NULL_HANDLE)
@@ -469,6 +331,12 @@ int main()
     if (pipeline == VK_NULL_HANDLE)
     {
         return 1;
+    }
+
+    std::vector<VkImageView> swapchainImageViews;
+    for (uint32_t i = 0; i < swapchain.ImageCount(); i++)
+    {
+        swapchainImageViews.push_back(swapchain.ImageView(i));
     }
 
     std::vector<VkFramebuffer> framebuffers = createFramebuffers(device, renderPass,
@@ -539,7 +407,7 @@ int main()
     initInfo.Queue = graphicsQueue;
     initInfo.DescriptorPool = imguiPool;
     initInfo.MinImageCount = 2;
-    initInfo.ImageCount = static_cast<uint32_t>(swapchainImages.size());
+    initInfo.ImageCount = swapchain.ImageCount();
 
     initInfo.PipelineInfoMain.RenderPass = renderPass;
     initInfo.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
@@ -596,7 +464,7 @@ int main()
         vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
 
         uint32_t imageIndex = 0;
-        vkAcquireNextImageKHR(device, swapchain, UINT64_MAX,
+        vkAcquireNextImageKHR(device, swapchain.Handle(), UINT64_MAX,
             imageAvailableSemaphores[semaphoreIndex], VK_NULL_HANDLE, &imageIndex);
 
         // Only reset the fence after a successful acquire to avoid a deadlock
@@ -643,7 +511,8 @@ int main()
         presentInfo.waitSemaphoreCount = 1;
         presentInfo.pWaitSemaphores = &renderFinishedSemaphores[currentFrame];
         presentInfo.swapchainCount = 1;
-        presentInfo.pSwapchains = &swapchain;
+        VkSwapchainKHR swapchainHandle = swapchain.Handle();
+        presentInfo.pSwapchains = &swapchainHandle;
         presentInfo.pImageIndices = &imageIndex;
 
         vkQueuePresentKHR(graphicsQueue, &presentInfo);
@@ -684,14 +553,6 @@ int main()
     vkDestroyShaderModule(device, vertShader, nullptr);
 
     vkDestroyRenderPass(device, renderPass, nullptr);
-
-    for (VkImageView view : swapchainImageViews)
-    {
-        vkDestroyImageView(device, view, nullptr);
-    }
-
-    // Destroy in reverse creation order. Vulkan does not clean up after you.
-    vkDestroySwapchainKHR(device, swapchain, nullptr);
     
     glfwDestroyWindow(window);
     glfwTerminate();

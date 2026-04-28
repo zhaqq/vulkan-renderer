@@ -24,7 +24,7 @@ add_library(imgui STATIC
     ThirdParty/imgui/imgui_widgets.cpp
     ThirdParty/imgui/backends/imgui_impl_glfw.cpp
     ThirdParty/imgui/backends/imgui_impl_vulkan.cpp
-)
+ "Source/Renderer/Swapchain.cpp")
 target_include_directories(imgui PUBLIC
     ThirdParty/imgui
     ThirdParty/imgui/backends
@@ -64,7 +64,7 @@ add_custom_target(Shaders ALL DEPENDS
 add_executable(Renderer
     Source/main.cpp
     Source/Core/VulkanContext.cpp
-)   
+ "Source/Renderer/Swapchain.cpp")   
 
 target_include_directories(Renderer PRIVATE
     Source
