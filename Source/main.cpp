@@ -1,3 +1,4 @@
+#include "Core/Barrier.hpp"
 #include "Core/VulkanContext.hpp"
 #include <iostream>
 #include <vector>
@@ -12,65 +13,11 @@
 #include <GLFW/glfw3.h>
 #include <Renderer/Swapchain.hpp>
 
-// Creates a legacy render pass with a single color attachment.
-// Phase 2 replaces this entirely with vkCmdBeginRenderingKHR (dynamic rendering).
-// We build it here to understand what dynamic rendering eliminates.
-static VkRenderPass createRenderPass(VkDevice device, VkFormat swapchainFormat)
-{
-    // The attachment describes the swapchain image: clear on load, store on done,
-    // and transition from UNDEFINED to PRESENT_SRC_KHR.
-    VkAttachmentDescription colorAttachment{};
-    colorAttachment.format = swapchainFormat;
-    colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-
-    VkAttachmentReference colorRef{};
-    colorRef.attachment = 0;
-    colorRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-    VkSubpassDescription subpass{};
-    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass.colorAttachmentCount = 1;
-    subpass.pColorAttachments = &colorRef;
-
-    // The subpass dependency tells the driver to wait for the swapchain image
-    // to be available before writing color output. Without this the render pass
-    // could start before the image is ready to be written to.
-    VkSubpassDependency dependency{};
-    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
-    dependency.dstSubpass = 0;
-    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.srcAccessMask = 0;
-    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-
-    VkRenderPassCreateInfo renderPassInfo{};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    renderPassInfo.attachmentCount = 1;
-    renderPassInfo.pAttachments = &colorAttachment;
-    renderPassInfo.subpassCount = 1;
-    renderPassInfo.pSubpasses = &subpass;
-    renderPassInfo.dependencyCount = 1;
-    renderPassInfo.pDependencies = &dependency;
-
-    VkRenderPass renderPass = VK_NULL_HANDLE;
-    if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS)
-    {
-        std::cerr << "Failed to create render pass\n";
-    }
-
-    return renderPass;
-}
-
 // Records draw commands into the command buffer for a single frame.
-// This runs every frame: begin render pass, bind pipeline, draw, end.
-static void recordCommandBuffer(VkCommandBuffer commandBuffer, VkRenderPass renderPass,
-    VkFramebuffer framebuffer, VkPipeline pipeline, VkExtent2D extent)
+// Uses dynamic rendering instead of VkRenderPass. Explicit layout transitions
+// replace the implicit ones the render pass used to handle.
+static void recordCommandBuffer(VkCommandBuffer commandBuffer, VkImage image,
+    VkImageView imageView, VkPipeline pipeline, VkExtent2D extent)
 {
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -81,23 +28,37 @@ static void recordCommandBuffer(VkCommandBuffer commandBuffer, VkRenderPass rend
         return;
     }
 
+    // Transition the swapchain image from its initial undefined layout to
+    // color attachment optimal so the GPU can render into it.
+    Barrier::ImageLayoutTransition(commandBuffer, image,
+        VK_IMAGE_LAYOUT_UNDEFINED,
+        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
+        VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+        VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+
     VkClearValue clearColor{};
     clearColor.color = { 0.0f, 0.0f, 0.0f, 1.0f };
 
-    VkRenderPassBeginInfo renderPassInfo{};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderPassInfo.renderPass = renderPass;
-    renderPassInfo.framebuffer = framebuffer;
-    renderPassInfo.renderArea.offset = { 0, 0 };
-    renderPassInfo.renderArea.extent = extent;
-    renderPassInfo.clearValueCount = 1;
-    renderPassInfo.pClearValues = &clearColor;
+    VkRenderingAttachmentInfo colorAttachment{};
+    colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    colorAttachment.imageView = imageView;
+    colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    colorAttachment.clearValue = clearColor;
 
-    vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    VkRenderingInfo renderingInfo{};
+    renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+    renderingInfo.renderArea = { {0, 0}, extent };
+    renderingInfo.layerCount = 1;
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachments = &colorAttachment;
+
+    vkCmdBeginRendering(commandBuffer, &renderingInfo);
 
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
-    // Viewport and scissor are dynamic so we set them here at record time.
     VkViewport viewport{};
     viewport.x = 0.0f;
     viewport.y = 0.0f;
@@ -112,12 +73,19 @@ static void recordCommandBuffer(VkCommandBuffer commandBuffer, VkRenderPass rend
     scissor.extent = extent;
     vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-    // 3 vertices, 1 instance, no offsets. Positions come from the vertex shader.
     vkCmdDraw(commandBuffer, 3, 1, 0, 0);
 
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
 
-    vkCmdEndRenderPass(commandBuffer);
+    vkCmdEndRendering(commandBuffer);
+
+    // Transition to present layout so the swapchain can display the image.
+    Barrier::ImageLayoutTransition(commandBuffer, image,
+        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+        VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+        VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, 0);
 
     if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS)
     {
@@ -125,36 +93,9 @@ static void recordCommandBuffer(VkCommandBuffer commandBuffer, VkRenderPass rend
     }
 }
 
-// Creates one framebuffer per swapchain image view, bound to the render pass.
-// A framebuffer connects a render pass to specific image views to render into.
-static std::vector<VkFramebuffer> createFramebuffers(VkDevice device,
-    VkRenderPass renderPass, const std::vector<VkImageView>& imageViews, VkExtent2D extent)
-{
-    std::vector<VkFramebuffer> framebuffers(imageViews.size());
-
-    for (size_t i = 0; i < imageViews.size(); i++)
-    {
-        VkFramebufferCreateInfo framebufferInfo{};
-        framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        framebufferInfo.renderPass = renderPass;
-        framebufferInfo.attachmentCount = 1;
-        framebufferInfo.pAttachments = &imageViews[i];
-        framebufferInfo.width = extent.width;
-        framebufferInfo.height = extent.height;
-        framebufferInfo.layers = 1;
-
-        if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &framebuffers[i]) != VK_SUCCESS)
-        {
-            std::cerr << "Failed to create framebuffer " << i << "\n";
-        }
-    }
-
-    return framebuffers;
-}
-
 // Creates the full graphics pipeline by explicitly filling every sub-struct.
 // Vulkan requires all state to be declared upfront unlike OpenGL's implicit state machine.
-static VkPipeline createGraphicsPipeline(VkDevice device, VkRenderPass renderPass,
+static VkPipeline createGraphicsPipeline(VkDevice device, VkFormat swapchainFormat,
     VkExtent2D extent, VkShaderModule vertShader, VkShaderModule fragShader,
     VkPipelineLayout& outLayout)
 {
@@ -238,8 +179,14 @@ static VkPipeline createGraphicsPipeline(VkDevice device, VkRenderPass renderPas
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = outLayout;
-    pipelineInfo.renderPass = renderPass;
-    pipelineInfo.subpass = 0;
+
+    // Dynamic rendering requires this struct in pNext instead of a VkRenderPass.
+    VkPipelineRenderingCreateInfo pipelineRenderingInfo{};
+    pipelineRenderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+    pipelineRenderingInfo.colorAttachmentCount = 1;
+    pipelineRenderingInfo.pColorAttachmentFormats = &swapchainFormat;
+
+    pipelineInfo.pNext = &pipelineRenderingInfo;
 
     VkPipeline pipeline = VK_NULL_HANDLE;
     if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline) != VK_SUCCESS)
@@ -309,13 +256,6 @@ int main()
 
     VkFormat             swapchainFormat = swapchain.Format();
     VkExtent2D           swapchainExtent = swapchain.Extent();
-    const std::vector<VkImage>& swapchainImages = swapchain.Images();
-
-    VkRenderPass renderPass = createRenderPass(device, swapchainFormat);
-    if (renderPass == VK_NULL_HANDLE)
-    {
-        return 1;
-    }
 
     VkShaderModule vertShader = loadShaderModule(device, SHADER_DIR "triangle_vs.spv");
     VkShaderModule fragShader = loadShaderModule(device, SHADER_DIR "triangle_ps.spv");
@@ -326,21 +266,12 @@ int main()
     }
 
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
-    VkPipeline pipeline = createGraphicsPipeline(device, renderPass, swapchainExtent,
+    VkPipeline pipeline = createGraphicsPipeline(device, swapchainFormat, swapchainExtent,
         vertShader, fragShader, pipelineLayout);
     if (pipeline == VK_NULL_HANDLE)
     {
         return 1;
     }
-
-    std::vector<VkImageView> swapchainImageViews;
-    for (uint32_t i = 0; i < swapchain.ImageCount(); i++)
-    {
-        swapchainImageViews.push_back(swapchain.ImageView(i));
-    }
-
-    std::vector<VkFramebuffer> framebuffers = createFramebuffers(device, renderPass,
-        swapchainImageViews, swapchainExtent);
 
     // The command pool owns the memory for command buffers.
     // RESET_COMMAND_BUFFER_BIT lets us re-record a buffer without resetting the whole pool.
@@ -409,16 +340,18 @@ int main()
     initInfo.MinImageCount = 2;
     initInfo.ImageCount = swapchain.ImageCount();
 
-    initInfo.PipelineInfoMain.RenderPass = renderPass;
+    initInfo.UseDynamicRendering = true;
     initInfo.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-    initInfo.PipelineInfoMain.Subpass = 0;
+    initInfo.PipelineInfoMain.PipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+    initInfo.PipelineInfoMain.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
+    initInfo.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = &swapchainFormat;
 
     ImGui_ImplVulkan_Init(&initInfo);
 
     // Per frame: one semaphore signals when the swapchain image is ready to render into,
     // one signals when rendering is done and the image can be presented,
     // one fence lets the CPU wait until the GPU has finished this frame slot.
-    std::vector<VkSemaphore> imageAvailableSemaphores(swapchainImages.size());
+    std::vector<VkSemaphore> imageAvailableSemaphores(swapchain.ImageCount());
     std::vector<VkSemaphore> renderFinishedSemaphores(MAX_FRAMES_IN_FLIGHT);
     std::vector<VkFence> inFlightFences(MAX_FRAMES_IN_FLIGHT);
 
@@ -485,8 +418,10 @@ int main()
 
         ImGui::Render();
 
-        recordCommandBuffer(commandBuffers[currentFrame], renderPass,
-            framebuffers[imageIndex], pipeline, swapchainExtent);
+        recordCommandBuffer(commandBuffers[currentFrame],
+            swapchain.Image(imageIndex),
+            swapchain.ImageView(imageIndex),
+            pipeline, swapchainExtent);
 
         VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 
@@ -541,18 +476,11 @@ int main()
     vkDestroyDescriptorPool(device, imguiPool, nullptr);
     vkDestroyCommandPool(device, commandPool, nullptr);
 
-    for (VkFramebuffer fb : framebuffers)
-    {
-        vkDestroyFramebuffer(device, fb, nullptr);
-    }
-
     vkDestroyPipeline(device, pipeline, nullptr);
     vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
 
     vkDestroyShaderModule(device, fragShader, nullptr);
     vkDestroyShaderModule(device, vertShader, nullptr);
-
-    vkDestroyRenderPass(device, renderPass, nullptr);
     
     glfwDestroyWindow(window);
     glfwTerminate();
