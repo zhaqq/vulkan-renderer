@@ -43,7 +43,7 @@ add_subdirectory(ThirdParty/tracy)
 
 # Compile test shader to SPIR-V via DXC at build time
 find_program(DXC_EXECUTABLE dxc
-    HINTS "$ENV{VULKAN_SDK}/Bin"
+    HINTS "$ENV{VULKAN_SDK}/Bin" "$ENV{VULKAN_SDK}/bin"
     REQUIRED
 )
 
