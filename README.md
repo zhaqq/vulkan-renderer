@@ -1,2 +1,2 @@
 # vulkan-renderer
-A structured Vulkan renderer progressing from triangle to PBR, 2D and 3D, built with HLSL/SPIR-V and MSVC.
+Building a Vulkan renderer from first principles in Modern C++, progressing from triangle rasterization through physically based rendering (PBR), covering 2D and 3D pipelines with HLSL shaders compiled to SPIR-V under MSVC.
